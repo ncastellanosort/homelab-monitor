@@ -1,13 +1,9 @@
 """
-main.py — Monitor de disponibilidad de Proxmox para ESP32 con MicroPython
+main.py — Monitor de Proxmox con dashboard web para ESP32 + MicroPython
 
-Verifica periódicamente si el servidor Proxmox responde vía HTTPS.
-Ignora la validación SSL (certificado auto-firmado de Proxmox y
-posible ausencia de CA raíz en la ESP32).
-Si acumula 3 fallos consecutivos, envía una alerta por Telegram
-y espera 10 minutos antes de reanudar la verificación.
+Unico archivo autónomo. Verifica Proxmox vía HTTPS, envía alertas
+por Telegram y sirve un dashboard HTTP en el puerto 80.
 """
-
 import network
 import socket
 import time
@@ -15,184 +11,148 @@ import gc
 
 
 # ============================================================
-# CONFIGURACIÓN — Ajusta estos valores a tu entorno
+# CONFIGURACION — ajusta estos valores a tu entorno
 # ============================================================
 
 WIFI_SSID     = "TU_SSID"
 WIFI_PASSWORD = "TU_PASSWORD"
 
 PROXMOX_HOST = "192.168.1.50"
-PROXMOX_PORT = 8006  # Puerto HTTPS de la interfaz web de Proxmox VE
+PROXMOX_PORT = 8006
 
 TELEGRAM_TOKEN = "TU_BOT_TOKEN"
 TELEGRAM_CHAT_ID = "TU_CHAT_ID"
 
-CHECK_INTERVAL  = 30    # Segundos entre cada verificación
-FAIL_THRESHOLD  = 3     # Fallos consecutivos necesarios para lanzar alerta
-ALERT_COOLDOWN  = 600   # Segundos de silencio tras enviar una alerta (10 min)
-REQUEST_TIMEOUT = 10    # Timeout en segundos para cada petición HTTPS
+CHECK_INTERVAL  = 30
+FAIL_THRESHOLD  = 3
+ALERT_COOLDOWN  = 600
+REQUEST_TIMEOUT = 10
+WEB_PORT        = 80
 
 
 # ============================================================
-# WI‑FI — Conexión y reconexión automática
+# WI-FI
 # ============================================================
 
-def connect_wifi():
-    """Establece la conexión Wi‑Fi con reintentos. Retorna True si ok."""
+def wifi_connect():
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
-
     if wlan.isconnected():
-        print(f"[WiFi] Ya conectado. IP: {wlan.ifconfig()[0]}")
+        print("[WiFi] Ya conectado. IP: {0}".format(wlan.ifconfig()[0]))
         return True
-
-    print(f"[WiFi] Conectando a '{WIFI_SSID}' …")
-    wlan.connect(WIFI_SSID, WIFI_PASSWORD)
-
-    # Esperar hasta 30 segundos por la conexión
-    for _ in range(30):
-        if wlan.isconnected():
-            print(f"[WiFi] Conectado. IP: {wlan.ifconfig()[0]}")
-            return True
-        time.sleep(1)
-
-    print("[WiFi] ERROR: no se pudo conectar tras 30 intentos.")
+    print("[WiFi] Conectando a '{0}' ...".format(WIFI_SSID))
+    # Reintentar hasta 3 veces (cold-boot puede necesitar mas tiempo)
+    for intento in range(1, 4):
+        wlan.connect(WIFI_SSID, WIFI_PASSWORD)
+        for _ in range(15):
+            if wlan.isconnected():
+                print("[WiFi] Conectado. IP: {0}".format(wlan.ifconfig()[0]))
+                return True
+            time.sleep(1)
+        print("[WiFi] Reintento {0}/3 ...".format(intento))
+    print("[WiFi] ERROR: no se pudo conectar tras 3 intentos.")
     return False
 
 
-def ensure_wifi():
-    """Verifica que el Wi‑Fi siga activo; reconecta si es necesario."""
+def wifi_ensure():
     wlan = network.WLAN(network.STA_IF)
     if not wlan.isconnected():
-        print("[WiFi] Conexión perdida, reintentando …")
-        return connect_wifi()
+        print("[WiFi] Conexion perdida, reintentando ...")
+        return wifi_connect()
     return True
 
 
+def wifi_ip():
+    wlan = network.WLAN(network.STA_IF)
+    return wlan.ifconfig()[0] if wlan.isconnected() else ""
+
+
 # ============================================================
-# SSL — Envoltorio que desactiva la validación del certificado
+# SSL helper (ignora certificados auto-firmados)
 # ============================================================
 
-def ssl_wrap_no_verify(sock, hostname):
-    """
-    Envuelve un socket en SSL ignorando la validación del certificado.
-    Prueba varias estrategias por compatibilidad con distintos builds
-    de MicroPython (CERT_NONE puede llamarse distinto o no existir).
-    Si nada funciona, devuelve el socket sin envolver.
-    """
+def _ssl_no_verify(sock, hostname):
     try:
         import ssl as _ssl
     except ImportError:
-        return sock  # Sin módulo SSL no se puede envolver
-
+        return sock
     CERT_NONE = getattr(_ssl, 'CERT_NONE', 0)
-
-    estrategias = [
+    for strat in [
         lambda: _ssl.wrap_socket(sock, server_hostname=hostname, cert_reqs=CERT_NONE),
         lambda: _ssl.wrap_socket(sock, cert_reqs=CERT_NONE),
         lambda: _ssl.wrap_socket(sock, server_hostname=hostname),
         lambda: _ssl.wrap_socket(sock),
-    ]
-
-    for estrategia in estrategias:
+    ]:
         try:
-            return estrategia()
+            return strat()
         except (OSError, AttributeError, TypeError, ValueError):
             continue
-
-    return sock  # Último recurso: socket sin SSL
+    return sock
 
 
 # ============================================================
-# PROXMOX — Petición HTTPS con certificado ignorado
+# PROXMOX — chequeo HTTPS
 # ============================================================
 
-def check_proxmox():
-    """
-    Realiza una petición HTTPS mínima a Proxmox.
-    Retorna True si el servidor responde (cualquier dato),
-    False ante timeout, error de conexión o SSL.
-    """
-    sock = None
+def proxmox_check():
+    s = None
     try:
         addr = socket.getaddrinfo(PROXMOX_HOST, PROXMOX_PORT)[0][-1]
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(REQUEST_TIMEOUT)
-        sock.connect(addr)
-
-        # Envolver en SSL sin validar el certificado auto‑firmado
-        sock = ssl_wrap_no_verify(sock, PROXMOX_HOST)
-
-        # Petición HTTP/1.1 mínima — solo necesitamos verificar que responda
-        request = "GET / HTTP/1.1\r\nHost: {0}:{1}\r\nConnection: close\r\n\r\n".format(
-            PROXMOX_HOST, PROXMOX_PORT
-        )
-        sock.write(request.encode())
-
-        # Leer respuesta — con recibir cualquier dato alcanza
-        data = sock.read(256)
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(REQUEST_TIMEOUT)
+        s.connect(addr)
+        s = _ssl_no_verify(s, PROXMOX_HOST)
+        req = "GET / HTTP/1.1\r\nHost: {0}:{1}\r\nConnection: close\r\n\r\n".format(
+            PROXMOX_HOST, PROXMOX_PORT)
+        s.write(req.encode())
+        data = s.read(256)
         return len(data) > 0
-
     except OSError as e:
-        print(f"  [Proxmox] Error de red: {e}")
+        print("  [Proxmox] Error de red: {0}".format(e))
         return False
     except Exception as e:
-        print(f"  [Proxmox] Error inesperado: {e}")
+        print("  [Proxmox] Error: {0}".format(e))
         return False
     finally:
-        if sock is not None:
+        if s is not None:
             try:
-                sock.close()
+                s.close()
             except Exception:
                 pass
         gc.collect()
 
 
 # ============================================================
-# TELEGRAM — Notificación por la API del bot
+# TELEGRAM — alertas
 # ============================================================
 
-def url_encode(texto):
-    """Codifica una cadena en formato URL (UTF‑8 + percent‑encoding)."""
-    seguros = (
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.~-"
-    )
-    resultado = []
-    for caracter in texto:
-        if caracter in seguros:
-            resultado.append(caracter)
-        elif caracter == ' ':
-            resultado.append('+')
+def _url_encode(texto):
+    seguros = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.~-"
+    res = []
+    for c in texto:
+        if c in seguros:
+            res.append(c)
+        elif c == ' ':
+            res.append('+')
         else:
-            # Codificar cada byte de la representación UTF‑8 del carácter
-            for byte in caracter.encode('utf-8'):
-                resultado.append('%{:02X}'.format(byte))
-    return ''.join(resultado)
+            for b in c.encode('utf-8'):
+                res.append('%{:02X}'.format(b))
+    return ''.join(res)
 
 
-def send_telegram(mensaje):
-    """
-    Envía un mensaje de texto al chat de Telegram configurado.
-    Retorna True si el envío fue exitoso, False en caso contrario.
-    """
-    TELEGRAM_HOST = "api.telegram.org"
-    TELEGRAM_PORT = 443
+def telegram_send(mensaje):
+    host = "api.telegram.org"
+    path = "/bot{0}/sendMessage".format(TELEGRAM_TOKEN)
+    body = "chat_id={0}&text={1}".format(TELEGRAM_CHAT_ID, _url_encode(mensaje))
 
-    path = f"/bot{TELEGRAM_TOKEN}/sendMessage"
-    body = f"chat_id={TELEGRAM_CHAT_ID}&text={url_encode(mensaje)}"
-
-    sock = None
+    s = None
     try:
-        addr = socket.getaddrinfo(TELEGRAM_HOST, TELEGRAM_PORT)[0][-1]
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(REQUEST_TIMEOUT)
-        sock.connect(addr)
-
-        # Telegram tiene certificado válido, pero la ESP32 puede carecer
-        # de los certificados raíz necesarios para validarlo
-        sock = ssl_wrap_no_verify(sock, TELEGRAM_HOST)
-
-        peticion = (
+        addr = socket.getaddrinfo(host, 443)[0][-1]
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(REQUEST_TIMEOUT)
+        s.connect(addr)
+        s = _ssl_no_verify(s, host)
+        req = (
             "POST {0} HTTP/1.1\r\n"
             "Host: {1}\r\n"
             "Content-Type: application/x-www-form-urlencoded\r\n"
@@ -200,30 +160,144 @@ def send_telegram(mensaje):
             "Connection: close\r\n"
             "\r\n"
             "{3}"
-        ).format(path, TELEGRAM_HOST, len(body), body)
-        sock.write(peticion.encode())
-
-        respuesta = sock.read(512)
-        if b"200 OK" in respuesta:
-            print("  [Telegram] Alerta enviada correctamente.")
+        ).format(path, host, len(body), body)
+        s.write(req.encode())
+        resp = s.read(512)
+        if b"200 OK" in resp:
+            print("  [Telegram] Alerta enviada.")
             return True
         else:
-            print(f"  [Telegram] Respuesta inesperada: {respuesta[:120]}")
+            print("  [Telegram] Error: {0}".format(resp[:120]))
             return False
-
     except OSError as e:
-        print(f"  [Telegram] Error de red: {e}")
+        print("  [Telegram] Error de red: {0}".format(e))
         return False
     except Exception as e:
-        print(f"  [Telegram] Error inesperado: {e}")
+        print("  [Telegram] Error: {0}".format(e))
         return False
     finally:
-        if sock is not None:
+        if s is not None:
             try:
-                sock.close()
+                s.close()
             except Exception:
                 pass
         gc.collect()
+
+
+# ============================================================
+# SERVIDOR WEB — dashboard no bloqueante
+# ============================================================
+
+def _web_render(state):
+    host = "{0}:{1}".format(PROXMOX_HOST, PROXMOX_PORT)
+    if state["proxmox_online"]:
+        dot, txt, clr = "#22c55e", "ONLINE", "#22c55e"
+    else:
+        dot, txt, clr = "#ef4444", "OFFLINE", "#ef4444"
+
+    if state["last_alert"] == 0:
+        last = "Nunca"
+    else:
+        d = int(time.time() - state["last_alert"])
+        if d < 60:
+            last = "hace {0}s".format(d)
+        elif d < 3600:
+            last = "hace {0}min".format(d // 60)
+        else:
+            last = "hace {0}h {1}min".format(d // 3600, (d % 3600) // 60)
+
+    CRLF = "\r\n"
+    body = (
+        "<!DOCTYPE html>"
+        "<html lang=\"es\">"
+        "<head>"
+        "<meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        "<meta http-equiv=\"refresh\" content=\"30\">"
+        "<title>Proxmox Monitor</title>"
+        "<style>"
+        "*{margin:0;padding:0;box-sizing:border-box}"
+        "body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;"
+        "display:flex;justify-content:center;align-items:center;min-height:100vh;padding:16px}"
+        ".card{background:#1e293b;border-radius:16px;padding:32px 24px;"
+        "max-width:420px;width:100%;text-align:center}"
+        "h1{font-size:1.3rem;font-weight:600;margin-bottom:24px;color:#94a3b8}"
+        ".dot{display:inline-block;width:28px;height:28px;border-radius:50%;"
+        "background:" + dot + ";margin-right:10px;vertical-align:middle;"
+        "box-shadow:0 0 16px " + dot + "88}"
+        ".status{font-size:2.2rem;font-weight:800;color:" + clr + ";margin:16px 0 24px}"
+        ".grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;text-align:left}"
+        ".label{font-size:.75rem;color:#64748b;text-transform:uppercase;letter-spacing:.04em}"
+        ".value{font-size:1rem;font-weight:600;color:#f1f5f9;word-break:break-all}"
+        ".bar{margin-top:20px;padding-top:16px;border-top:1px solid #334155;"
+        "font-size:.7rem;color:#475569}"
+        "</style>"
+        "</head>"
+        "<body>"
+        "<div class=\"card\">"
+        "<h1>Proxmox Monitor</h1>"
+        "<div>"
+        "<span class=\"dot\"></span>"
+        "<span class=\"status\">" + txt + "</span>"
+        "</div>"
+        "<div class=\"grid\">"
+        "<div><div class=\"label\">Host</div><div class=\"value\">" + host + "</div></div>"
+        "<div><div class=\"label\">Fallos</div><div class=\"value\">" +
+        str(state["fail_count"]) + "/" + str(FAIL_THRESHOLD) + "</div></div>"
+        "<div><div class=\"label\">Ultima alerta</div><div class=\"value\">" + last + "</div></div>"
+        "<div><div class=\"label\">WiFi IP</div><div class=\"value\">" + state["wifi_ip"] + "</div></div>"
+        "</div>"
+        "<div class=\"bar\">uptime " + str(int(state["uptime"])) +
+        "s &mdash; auto-refresh 30s</div>"
+        "</div>"
+        "</body>"
+        "</html>"
+    )
+
+    return "HTTP/1.0 200 OK" + CRLF + \
+           "Content-Type: text/html; charset=utf-8" + CRLF + \
+           "Connection: close" + CRLF + CRLF + body
+
+
+def _web_start():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(("0.0.0.0", WEB_PORT))
+        s.listen(2)
+        s.settimeout(1)
+        print("[Web] Dashboard en http://{0}:{1}/".format(wifi_ip(), WEB_PORT))
+        return s
+    except OSError as e:
+        print("[Web] Error al iniciar: {0}".format(e))
+        return None
+
+
+def _web_serve(state, server_sock):
+    if server_sock is None:
+        return
+    try:
+        client, _ = server_sock.accept()
+    except OSError:
+        return
+    try:
+        # Leer con recv() en vez de read() — mas fiable en algunas builds
+        client.settimeout(5)
+        request = client.recv(512)
+        if not request or len(request) == 0:
+            # Si recv devuelve vacio, reintentar una vez
+            request = client.recv(512)
+        if request and b"GET /" in request:
+            state["uptime"] = time.time()
+            response = _web_render(state)
+            client.sendall(response.encode())
+    except Exception:
+        pass
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
 
 
 # ============================================================
@@ -231,77 +305,99 @@ def send_telegram(mensaje):
 # ============================================================
 
 def main():
-    print("\n=== Monitor de Proxmox para ESP32 ===")
-    print(f"Objetivo:  {PROXMOX_HOST}:{PROXMOX_PORT}")
-    print(f"Intervalo: {CHECK_INTERVAL}s  |  Umbral: {FAIL_THRESHOLD} fallos")
-    print(f"Cooldown:  {ALERT_COOLDOWN}s (10 min)\n")
+    print("\n=== Proxmox Monitor v3 ===")
+    print("Host: {0}:{1}  |  Intervalo: {2}s".format(
+        PROXMOX_HOST, PROXMOX_PORT, CHECK_INTERVAL))
+    print("Dashboard: http://<IP>:{0}/".format(WEB_PORT))
+    print("=" * 40 + "\n")
 
-    # Conexión Wi‑Fi inicial — sin ella no podemos operar
-    if not connect_wifi():
-        print("[FATAL] Sin Wi‑Fi no se puede operar. Reinicia la ESP32.")
+    if not wifi_connect():
+        print("[FATAL] Sin Wi-Fi.")
         return
 
-    fail_count = 0               # Fallos consecutivos actuales
-    last_alert = 0               # Timestamp de la última alerta enviada
+    state = {
+        "proxmox_online": True,
+        "fail_count": 0,
+        "last_alert": 0,
+        "uptime": 0,
+        "wifi_ip": wifi_ip(),
+    }
 
+    server_sock = _web_start()
+
+    last_check = 0
     while True:
         try:
-            if not ensure_wifi():
-                time.sleep(10)   # Esperar antes de reintentar el Wi‑Fi
+            if not wifi_ensure():
+                _web_serve(state, server_sock)
+                time.sleep(1)
                 continue
 
-            print("[{0:.0f}] Verificando Proxmox …".format(time.time()), end="")
+            state["wifi_ip"] = wifi_ip()
+            now = time.time()
 
-            if check_proxmox():
-                print(" OK")
-                if fail_count > 0:
-                    print(f"  -> Contador de fallos reiniciado (era {fail_count})")
-                fail_count = 0
-            else:
-                fail_count += 1
-                print(f" FALLO ({fail_count}/{FAIL_THRESHOLD})")
+            # Chequeo de Proxmox (respeta cooldown tras alerta)
+            in_cooldown = (
+                state["last_alert"] > 0 and
+                now - state["last_alert"] < ALERT_COOLDOWN
+            )
 
-                if fail_count >= FAIL_THRESHOLD:
-                    ahora = time.time()
-                    if ahora - last_alert >= ALERT_COOLDOWN:
-                        # Construir y enviar el mensaje de alerta
-                        mensaje = (
+            if not in_cooldown and now - last_check >= CHECK_INTERVAL:
+                last_check = now
+                print("[{0:.0f}] Verificando Proxmox ...".format(now), end="")
+
+                if proxmox_check():
+                    print(" OK")
+                    state["proxmox_online"] = True
+                    if state["fail_count"] > 0:
+                        print("  -> Contador reiniciado (era {0})".format(state["fail_count"]))
+                    state["fail_count"] = 0
+                else:
+                    state["fail_count"] += 1
+                    state["proxmox_online"] = False
+                    print(" FALLO ({0}/{1})".format(state["fail_count"], FAIL_THRESHOLD))
+
+                    if state["fail_count"] >= FAIL_THRESHOLD:
+                        msg = (
                             "ALERTA: Proxmox NO responde\n"
                             "Host: {0}:{1}\n"
-                            "Fallos consecutivos: {2}\n"
-                            "Tiempo desde arranque: {3}s"
-                        ).format(PROXMOX_HOST, PROXMOX_PORT, fail_count, int(time.time()))
-                        print("  -> Enviando alerta por Telegram …")
-                        send_telegram(mensaje)
+                            "Fallos: {2}\n"
+                            "Dashboard: http://{3}"
+                        ).format(PROXMOX_HOST, PROXMOX_PORT,
+                                 state["fail_count"], state["wifi_ip"])
+                        print("  -> Enviando alerta ...")
+                        telegram_send(msg)
+                        state["last_alert"] = now
+                        state["fail_count"] = 0
+                        print("  -> Cooldown {0}s ({1} min)".format(
+                            ALERT_COOLDOWN, ALERT_COOLDOWN // 60))
 
-                        last_alert = ahora
-                        fail_count = 0
-
-                        # Pausa larga para no saturar de notificaciones
-                        print(
-                            "  -> Pausa de {0}s (10 min) para evitar spam …".format(
-                                ALERT_COOLDOWN
-                            )
-                        )
-                        time.sleep(ALERT_COOLDOWN)
-                        continue
-                    else:
-                        restante = int(ALERT_COOLDOWN - (ahora - last_alert))
-                        print(
-                            "  -> En cooldown ({0}s restantes), no se reenvía alerta.".format(
-                                restante
-                            )
-                        )
-
-            time.sleep(CHECK_INTERVAL)
+            # Servir HTTP (no bloqueante, timeout 1s)
+            _web_serve(state, server_sock)
 
         except KeyboardInterrupt:
-            print("\n[INFO] Monitor detenido por el usuario.")
+            print("\n[INFO] Monitor detenido.")
             break
         except Exception as e:
-            print(f"[ERROR] Excepción en bucle principal: {e}")
-            time.sleep(CHECK_INTERVAL)
+            print("[ERROR] {0}".format(e))
+            deadline = time.time() + CHECK_INTERVAL
+            while time.time() < deadline:
+                _web_serve(state, server_sock)
 
 
-# Punto de entrada — en MicroPython main.py se ejecuta directamente al boot
-main()
+# ============================================================
+# PUNTO DE ENTRADA
+# ============================================================
+
+# ── Arranque desde cold-boot ──
+# Delay para asegurar que el hardware este listo
+time.sleep(3)
+
+# Ejecutar el monitor (captura errores para dejar REPL accesible)
+try:
+    main()
+except Exception as e:
+    import sys
+    print("[FATAL] main() fallo:")
+    sys.print_exception(e)
+    # REPL queda libre para debug
