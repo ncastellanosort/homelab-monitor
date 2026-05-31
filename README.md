@@ -1,5 +1,7 @@
 # ESP32 Proxmox Monitor
 
+[![GitHub release](https://img.shields.io/github/v/release/ncastellanosort/homelab-monitor?style=flat-square)](https://github.com/ncastellanosort/homelab-monitor/releases)
+
 Proxmox VE availability monitor running on an ESP32 with MicroPython. Periodically checks if the server responds via HTTPS, sends Telegram alerts when it goes down, and serves a live HTTP dashboard on port 80.
 
 ## Features
