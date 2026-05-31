@@ -24,8 +24,8 @@ WIFI_PASSWORD = "TU_PASSWORD"
 PROXMOX_HOST = "192.168.1.50"
 PROXMOX_PORT = 8006  # Puerto HTTPS de la interfaz web de Proxmox VE
 
-TELEGRAM_TOKEN = "TU_BOT_TOKEN"      # Token del bot de Telegram
-TELEGRAM_CHAT_ID = "TU_CHAT_ID"      # ID del chat o grupo destinatario
+TELEGRAM_TOKEN = "TU_BOT_TOKEN"
+TELEGRAM_CHAT_ID = "TU_CHAT_ID"
 
 CHECK_INTERVAL  = 30    # Segundos entre cada verificación
 FAIL_THRESHOLD  = 3     # Fallos consecutivos necesarios para lanzar alerta
@@ -124,11 +124,8 @@ def check_proxmox():
         sock = ssl_wrap_no_verify(sock, PROXMOX_HOST)
 
         # Petición HTTP/1.1 mínima — solo necesitamos verificar que responda
-        request = (
-            f"GET / HTTP/1.1\r\n"
-            f"Host: {PROXMOX_HOST}:{PROXMOX_PORT}\r\n"
-            f"Connection: close\r\n"
-            f"\r\n"
+        request = "GET / HTTP/1.1\r\nHost: {0}:{1}\r\nConnection: close\r\n\r\n".format(
+            PROXMOX_HOST, PROXMOX_PORT
         )
         sock.write(request.encode())
 
@@ -196,14 +193,14 @@ def send_telegram(mensaje):
         sock = ssl_wrap_no_verify(sock, TELEGRAM_HOST)
 
         peticion = (
-            f"POST {path} HTTP/1.1\r\n"
-            f"Host: {TELEGRAM_HOST}\r\n"
-            f"Content-Type: application/x-www-form-urlencoded\r\n"
-            f"Content-Length: {len(body)}\r\n"
-            f"Connection: close\r\n"
-            f"\r\n"
-            f"{body}"
-        )
+            "POST {0} HTTP/1.1\r\n"
+            "Host: {1}\r\n"
+            "Content-Type: application/x-www-form-urlencoded\r\n"
+            "Content-Length: {2}\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "{3}"
+        ).format(path, TELEGRAM_HOST, len(body), body)
         sock.write(peticion.encode())
 
         respuesta = sock.read(512)
@@ -253,7 +250,7 @@ def main():
                 time.sleep(10)   # Esperar antes de reintentar el Wi‑Fi
                 continue
 
-            print(f"[{time.time():.0f}] Verificando Proxmox …", end="")
+            print("[{0:.0f}] Verificando Proxmox …".format(time.time()), end="")
 
             if check_proxmox():
                 print(" OK")
@@ -269,11 +266,11 @@ def main():
                     if ahora - last_alert >= ALERT_COOLDOWN:
                         # Construir y enviar el mensaje de alerta
                         mensaje = (
-                            "⚠️ ALERTA: Proxmox NO responde\n"
-                            f"Host: {PROXMOX_HOST}:{PROXMOX_PORT}\n"
-                            f"Fallos consecutivos: {fail_count}\n"
-                            f"Tiempo desde arranque: {time.time():.0f}s"
-                        )
+                            "ALERTA: Proxmox NO responde\n"
+                            "Host: {0}:{1}\n"
+                            "Fallos consecutivos: {2}\n"
+                            "Tiempo desde arranque: {3}s"
+                        ).format(PROXMOX_HOST, PROXMOX_PORT, fail_count, int(time.time()))
                         print("  -> Enviando alerta por Telegram …")
                         send_telegram(mensaje)
 
@@ -282,16 +279,18 @@ def main():
 
                         # Pausa larga para no saturar de notificaciones
                         print(
-                            f"  -> Pausa de {ALERT_COOLDOWN}s (10 min) "
-                            f"para evitar spam …"
+                            "  -> Pausa de {0}s (10 min) para evitar spam …".format(
+                                ALERT_COOLDOWN
+                            )
                         )
                         time.sleep(ALERT_COOLDOWN)
                         continue
                     else:
                         restante = int(ALERT_COOLDOWN - (ahora - last_alert))
                         print(
-                            f"  -> En cooldown ({restante}s restantes), "
-                            f"no se reenvía alerta."
+                            "  -> En cooldown ({0}s restantes), no se reenvía alerta.".format(
+                                restante
+                            )
                         )
 
             time.sleep(CHECK_INTERVAL)
