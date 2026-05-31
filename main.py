@@ -325,6 +325,17 @@ def main():
 
     server_sock = _web_start()
 
+    # Notificar arranque por Telegram
+    boot_msg = (
+        "\xf0\x9f\x9f\xa2 ESP32 Monitor ONLINE\n"
+        "WiFi: {0}\n"
+        "Dashboard: http://{0}:{1}/\n"
+        "Proxmox: {2}:{3}\n"
+        "Uptime: {4}s"
+    ).format(state["wifi_ip"], WEB_PORT, PROXMOX_HOST, PROXMOX_PORT, int(time.time()))
+    print("[Boot] Enviando notificacion a Telegram ...")
+    telegram_send(boot_msg)
+
     last_check = 0
     while True:
         try:
