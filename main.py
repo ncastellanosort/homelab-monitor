@@ -126,6 +126,20 @@ def proxmox_check():
 # TELEGRAM — alertas
 # ============================================================
 
+def _format_uptime(seconds):
+    s = int(seconds)
+    h = s // 3600
+    m = (s % 3600) // 60
+    sec = s % 60
+    parts = []
+    if h > 0:
+        parts.append("{0}h".format(h))
+    if m > 0:
+        parts.append("{0}m".format(m))
+    parts.append("{0}s".format(sec))
+    return " ".join(parts)
+
+
 def _url_encode(texto):
     seguros = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.~-"
     res = []
@@ -143,7 +157,7 @@ def _url_encode(texto):
 def telegram_send(mensaje):
     host = "api.telegram.org"
     path = "/bot{0}/sendMessage".format(TELEGRAM_TOKEN)
-    body = "chat_id={0}&text={1}".format(TELEGRAM_CHAT_ID, _url_encode(mensaje))
+    body = "chat_id={0}&text={1}&parse_mode=HTML".format(TELEGRAM_CHAT_ID, _url_encode(mensaje))
 
     s = None
     try:
@@ -217,38 +231,37 @@ def _web_render(state):
         "<title>Proxmox Monitor</title>"
         "<style>"
         "*{margin:0;padding:0;box-sizing:border-box}"
-        "body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;"
-        "display:flex;justify-content:center;align-items:center;min-height:100vh;padding:16px}"
-        ".card{background:#1e293b;border-radius:16px;padding:32px 24px;"
-        "max-width:420px;width:100%;text-align:center}"
-        "h1{font-size:1.3rem;font-weight:600;margin-bottom:24px;color:#94a3b8}"
-        ".dot{display:inline-block;width:28px;height:28px;border-radius:50%;"
-        "background:" + dot + ";margin-right:10px;vertical-align:middle;"
-        "box-shadow:0 0 16px " + dot + "88}"
-        ".status{font-size:2.2rem;font-weight:800;color:" + clr + ";margin:16px 0 24px}"
-        ".grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;text-align:left}"
-        ".label{font-size:.75rem;color:#64748b;text-transform:uppercase;letter-spacing:.04em}"
-        ".value{font-size:1rem;font-weight:600;color:#f1f5f9;word-break:break-all}"
-        ".bar{margin-top:20px;padding-top:16px;border-top:1px solid #334155;"
-        "font-size:.7rem;color:#475569}"
+        "body{font-family:system-ui,sans-serif;background:#1a1a1a;color:#f0f0f0;"
+        "display:flex;justify-content:center;align-items:center;min-height:100vh;padding:20px}"
+        ".card{max-width:400px;width:100%;text-align:center}"
+        "h1{font-size:1.2rem;font-weight:600;margin-bottom:20px;color:#999}"
+        ".dot{display:inline-block;width:16px;height:16px;border-radius:50%;"
+        "background:" + dot + ";margin-right:8px;vertical-align:middle}"
+        ".status{font-size:2rem;font-weight:800;color:" + clr + ";margin:8px 0 20px}"
+        ".info{margin-bottom:20px}"
+        ".row{display:flex;justify-content:space-between;padding:6px 0;"
+        "border-bottom:1px solid #333}"
+        ".lbl{color:#888;font-size:.85rem}"
+        ".val{color:#f0f0f0;font-size:.85rem;font-weight:500}"
+        ".bar{margin-top:16px;font-size:.7rem;color:#666}"
         "</style>"
         "</head>"
         "<body>"
         "<div class=\"card\">"
         "<h1>Proxmox Monitor</h1>"
-        "<div>"
-        "<span class=\"dot\"></span>"
-        "<span class=\"status\">" + txt + "</span>"
+        "<div><span class=\"dot\"></span><span class=\"status\">" + txt + "</span></div>"
+        "<div class=\"info\">"
+        "<div class=\"row\"><span class=\"lbl\">Host</span>"
+        "<span class=\"val\">" + host + "</span></div>"
+        "<div class=\"row\"><span class=\"lbl\">Fallos</span>"
+        "<span class=\"val\">" + str(state["fail_count"]) + "/" + str(FAIL_THRESHOLD) + "</span></div>"
+        "<div class=\"row\"><span class=\"lbl\">Alerta</span>"
+        "<span class=\"val\">" + last + "</span></div>"
+        "<div class=\"row\"><span class=\"lbl\">WiFi</span>"
+        "<span class=\"val\">" + state["wifi_ip"] + "</span></div>"
         "</div>"
-        "<div class=\"grid\">"
-        "<div><div class=\"label\">Host</div><div class=\"value\">" + host + "</div></div>"
-        "<div><div class=\"label\">Fallos</div><div class=\"value\">" +
-        str(state["fail_count"]) + "/" + str(FAIL_THRESHOLD) + "</div></div>"
-        "<div><div class=\"label\">Ultima alerta</div><div class=\"value\">" + last + "</div></div>"
-        "<div><div class=\"label\">WiFi IP</div><div class=\"value\">" + state["wifi_ip"] + "</div></div>"
-        "</div>"
-        "<div class=\"bar\">uptime " + str(int(state["uptime"])) +
-        "s &mdash; auto-refresh 30s</div>"
+        "<div class=\"bar\">uptime " + _format_uptime(int(state["uptime"])) +
+        " &mdash; auto-refresh 30s</div>"
         "</div>"
         "</body>"
         "</html>"
@@ -326,13 +339,16 @@ def main():
     server_sock = _web_start()
 
     # Notificar arranque por Telegram
+    uptime_str = _format_uptime(int(time.time()))
     boot_msg = (
-        "\xf0\x9f\x9f\xa2 ESP32 Monitor ONLINE\n"
-        "WiFi: {0}\n"
-        "Dashboard: http://{0}:{1}/\n"
-        "Proxmox: {2}:{3}\n"
-        "Uptime: {4}s"
-    ).format(state["wifi_ip"], WEB_PORT, PROXMOX_HOST, PROXMOX_PORT, int(time.time()))
+        "\xf0\x9f\x9f\xa2 <b>ESP32 Monitor ONLINE</b>\n"
+        "<i>Sistema iniciado correctamente</i>\n"
+        "\n"
+        "\xf0\x9f\x93\xa1 <b>WiFi:</b> {0}\n"
+        "\xf0\x9f\x8c\x90 <b>Dashboard:</b> <code>http://{0}:{1}/</code>\n"
+        "\xf0\x9f\x96\xa5 <b>Proxmox:</b> <code>{2}:{3}</code>\n"
+        "\xe2\x8f\xb1 <b>Uptime:</b> {4}"
+    ).format(state["wifi_ip"], WEB_PORT, PROXMOX_HOST, PROXMOX_PORT, uptime_str)
     print("[Boot] Enviando notificacion a Telegram ...")
     telegram_send(boot_msg)
 
@@ -369,13 +385,17 @@ def main():
                     print(" FALLO ({0}/{1})".format(state["fail_count"], FAIL_THRESHOLD))
 
                     if state["fail_count"] >= FAIL_THRESHOLD:
+                        uptime_str = _format_uptime(int(now))
                         msg = (
-                            "ALERTA: Proxmox NO responde\n"
-                            "Host: {0}:{1}\n"
-                            "Fallos: {2}\n"
-                            "Dashboard: http://{3}"
+                            "\xf0\x9f\x94\xb4 <b>ALERTA: Proxmox NO responde</b>\n"
+                            "\n"
+                            "\xf0\x9f\x96\xa5 <b>Host:</b> <code>{0}:{1}</code>\n"
+                            "\xe2\x9d\x8c <b>Fallos consecutivos:</b> {2}\n"
+                            "\xe2\x8f\xb1 <b>Uptime:</b> {3}\n"
+                            "\n"
+                            "\xf0\x9f\x8c\x90 <b>Dashboard:</b> <code>http://{4}/</code>"
                         ).format(PROXMOX_HOST, PROXMOX_PORT,
-                                 state["fail_count"], state["wifi_ip"])
+                                 state["fail_count"], uptime_str, state["wifi_ip"])
                         print("  -> Enviando alerta ...")
                         telegram_send(msg)
                         state["last_alert"] = now
