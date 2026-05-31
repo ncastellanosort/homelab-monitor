@@ -1,13 +1,15 @@
 # ESP32 Proxmox Monitor
 
-Proxmox VE availability monitor running on an ESP32 with MicroPython. Periodically checks if the server responds via HTTPS and sends Telegram alerts when it goes down.
+Proxmox VE availability monitor running on an ESP32 with MicroPython. Periodically checks if the server responds via HTTPS, sends Telegram alerts when it goes down, and serves a live HTTP dashboard on port 80.
 
 ## Features
 
-- Wi‑Fi connection with automatic reconnection on dropout
-- HTTPS requests ignoring SSL certificate validation (works with self‑signed certs and ESP32 devices without built‑in root CAs)
+- Wi‑Fi connection with automatic reconnection and cold-boot retries (3 attempts)
+- HTTPS health checks ignoring SSL certificate validation (works with self‑signed certs)
+- **HTTP dashboard** on port 80 — real-time status, accessible from any device on the LAN
 - Configurable failure threshold before triggering an alert
 - 10‑minute cooldown after each alert to avoid notification spam
+- Telegram notification on boot (device online, dashboard URL)
 - Zero external dependencies — uses only MicroPython standard library (`socket`, `ssl`, `network`, `time`, `gc`)
 
 ## Requirements
@@ -16,6 +18,8 @@ Proxmox VE availability monitor running on an ESP32 with MicroPython. Periodical
 - **MicroPython** 1.18 or later flashed on the board
 - A **Telegram bot** token ([create one with @BotFather](https://t.me/BotFather))
 - The **chat ID** of the alert recipient
+
+> **Note:** Telegram alerts may fail on MicroPython firmware v1.23 and older due to the bundled mbedTLS library not supporting TLS 1.2+ ciphers required by `api.telegram.org`. The Proxmox check and HTTP dashboard are unaffected. Upgrading to MicroPython v1.24+ may resolve this.
 
 ## Flashing and deployment (Arch Linux)
 
@@ -28,17 +32,20 @@ pip install mpremote
 # 2. Download MicroPython firmware
 curl -LO https://micropython.org/resources/firmware/ESP32_GENERIC-20240602-v1.23.0.bin
 
-# 3. Flash the ESP32 (adjust --port if needed)
+# 3. Clean flash (recommended for first deploy)
 esptool --port /dev/ttyUSB0 erase-flash
 esptool --port /dev/ttyUSB0 --baud 460800 write-flash -z 0x1000 ESP32_GENERIC-*.bin
 
-# 4. Edit configuration variables in main.py
+# 4. Edit credentials in main.py (lines 17–24)
 #    WIFI_SSID, WIFI_PASSWORD, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
 
-# 5. Upload the script
-mpremote connect /dev/ttyUSB0 cp main.py :main.py
-mpremote connect /dev/ttyUSB0 reset
+# 5. Upload files (order matters: boot.py first, main.py last)
+source ~/.venvs/esp32/bin/activate
+mpremote connect /dev/ttyUSB0 cp boot.py :boot.py
+mpremote connect /dev/ttyUSB0 cp main.py :main.py   # triggers auto-start
 ```
+
+> **Why clean flash?** `mpremote cp` triggers a soft-reset after each upload, which runs `main.py`. A clean flash ensures no stale files interfere with the deployment sequence.
 
 ## Configuration
 
@@ -57,22 +64,42 @@ TELEGRAM_CHAT_ID = "123456789"                # Destination chat ID
 CHECK_INTERVAL  = 30    # Seconds between health checks
 FAIL_THRESHOLD  = 3     # Consecutive failures to trigger alert
 ALERT_COOLDOWN  = 600   # Silence period after alert (10 minutes)
+WEB_PORT        = 80    # HTTP dashboard port
 ```
+
+## Architecture
+
+Single-file monolithic design (`main.py`, ~400 lines) organized in sections:
+
+| Section | Responsibility |
+|---------|---------------|
+| CONFIGURACION | All user-configurable variables |
+| WI‑FI | Connection with 3 retries for cold-boot reliability |
+| SSL helper | 4‑strategy cascade to disable cert validation across MicroPython builds |
+| PROXMOX | Minimal HTTPS `GET /` request, returns bool |
+| TELEGRAM | URL-encode + POST to Bot API |
+| SERVIDOR WEB | Non‑blocking HTTP server with HTML dashboard |
+| BUCLE PRINCIPAL | Cooperative loop: Wi‑Fi watchdog → Proxmox check → HTTP serve |
+| ENTRY POINT | 3s cold-boot delay + `try/except` to keep REPL accessible on crash |
 
 ## How it works
 
 ```
-[Boot] → Connect Wi‑Fi → Loop:
-  ├─ Proxmox responds → counter = 0 → wait 30s
+[Boot] → 3s delay → Connect Wi‑Fi (3 retries) → Telegram boot alert → Loop:
+  ├─ Proxmox responds → counter = 0 → serve HTTP → wait 30s
   └─ Proxmox does NOT respond → counter++
-       └─ counter >= 3 → Telegram alert → sleep 600s
+       └─ counter >= 3 → Telegram alert → cooldown 600s (HTTP still served)
 ```
 
-1. Every 30 seconds a `GET /` request is sent to `https://192.168.1.50:8006/`
-2. On failure (timeout or connection error) a counter increments
-3. After 3 consecutive failures (~1.5 min) a Telegram alert is sent
-4. After sending the alert, a 10‑minute pause prevents notification flooding
-5. If the server starts responding again the failure counter resets to 0
+## HTTP Dashboard
+
+Access from any browser on the LAN:
+
+```
+http://<ESP32_IP>:80/
+```
+
+Displays: Proxmox status (ONLINE/OFFLINE), host, failure count, last alert time, Wi‑Fi IP, uptime. Auto-refreshes every 30 seconds. Dark theme, mobile-friendly.
 
 ## Monitoring serial output
 
@@ -83,21 +110,22 @@ mpremote connect /dev/ttyUSB0
 Sample output:
 
 ```
-=== Monitor de Proxmox para ESP32 ===
-Objetivo:  192.168.1.50:8006
-Intervalo: 30s  |  Umbral: 3 fallos
-Cooldown:  600s (10 min)
+=== Proxmox Monitor v3 ===
+Host: 192.168.1.50:8006  |  Intervalo: 30s
+Dashboard: http://<IP>:80/
 
 [WiFi] Conectando a 'MyWiFi' …
 [WiFi] Conectado. IP: 192.168.1.100
-[12345] Verificando Proxmox … OK
-[12375] Verificando Proxmox … OK
-[12405] Verificando Proxmox … FALLO (1/3)
-[12435] Verificando Proxmox … FALLO (2/3)
-[12465] Verificando Proxmox … FALLO (3/3)
-  -> Enviando alerta por Telegram …
-  [Telegram] Alerta enviada correctamente.
-  -> Pausa de 600s (10 min) para evitar spam …
+[Web] Dashboard en http://192.168.1.100:80/
+[Boot] Enviando notificacion a Telegram …
+[45] Verificando Proxmox … OK
+[75] Verificando Proxmox … OK
+[105] Verificando Proxmox … FALLO (1/3)
+[135] Verificando Proxmox … FALLO (2/3)
+[165] Verificando Proxmox … FALLO (3/3)
+  -> Enviando alerta …
+  [Telegram] Alerta enviada.
+  -> Cooldown 600s (10 min)
 ```
 
 ## License
