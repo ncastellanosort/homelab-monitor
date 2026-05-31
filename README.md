@@ -1,86 +1,86 @@
 # ESP32 Proxmox Monitor
 
-Monitor de disponibilidad para servidores Proxmox VE que corre en una ESP32 con MicroPython. Verifica periódicamente si el servidor responde vía HTTPS y envía alertas por Telegram si deja de hacerlo.
+Proxmox VE availability monitor running on an ESP32 with MicroPython. Periodically checks if the server responds via HTTPS and sends Telegram alerts when it goes down.
 
-## Características
+## Features
 
-- Conexión Wi‑Fi con reconexión automática ante caídas
-- Peticiones HTTPS ignorando el certificado SSL (válido tanto para certificados auto‑firmados como para ESP32 sin CAs raíz)
-- Umbral configurable de fallos consecutivos antes de disparar la alerta
-- Cooldown de 10 minutos tras cada alerta para evitar saturación de notificaciones
-- Sin dependencias externas: solo usa módulos estándar de MicroPython (`socket`, `ssl`, `network`, `time`, `gc`)
+- Wi‑Fi connection with automatic reconnection on dropout
+- HTTPS requests ignoring SSL certificate validation (works with self‑signed certs and ESP32 devices without built‑in root CAs)
+- Configurable failure threshold before triggering an alert
+- 10‑minute cooldown after each alert to avoid notification spam
+- Zero external dependencies — uses only MicroPython standard library (`socket`, `ssl`, `network`, `time`, `gc`)
 
-## Requisitos
+## Requirements
 
-- **ESP32** con al menos 4 MB de flash
-- **MicroPython** 1.18 o superior flasheado en la placa
-- Un **bot de Telegram** con su token ([crear bot con @BotFather](https://t.me/BotFather))
-- El **chat ID** del destinatario de las alertas
+- **ESP32** with at least 4 MB flash
+- **MicroPython** 1.18 or later flashed on the board
+- A **Telegram bot** token ([create one with @BotFather](https://t.me/BotFather))
+- The **chat ID** of the alert recipient
 
-## Flasheo y despliegue (desde Arch Linux)
+## Flashing and deployment (Arch Linux)
 
 ```bash
-# 1. Instalar herramientas
+# 1. Install tools
 sudo pacman -S esptool
 python -m venv ~/.venvs/esp32 && source ~/.venvs/esp32/bin/activate
 pip install mpremote
 
-# 2. Descargar firmware MicroPython
+# 2. Download MicroPython firmware
 curl -LO https://micropython.org/resources/firmware/ESP32_GENERIC-20240602-v1.23.0.bin
 
-# 3. Flashear la ESP32 (ajusta --port si usas otro dispositivo)
-esptool --port /dev/ttyUSB0 erase_flash
-esptool --port /dev/ttyUSB0 --baud 460800 write_flash -z 0x1000 ESP32_GENERIC-*.bin
+# 3. Flash the ESP32 (adjust --port if needed)
+esptool --port /dev/ttyUSB0 erase-flash
+esptool --port /dev/ttyUSB0 --baud 460800 write-flash -z 0x1000 ESP32_GENERIC-*.bin
 
-# 4. Editar variables de configuración en main.py
+# 4. Edit configuration variables in main.py
 #    WIFI_SSID, WIFI_PASSWORD, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
 
-# 5. Subir el script
+# 5. Upload the script
 mpremote connect /dev/ttyUSB0 cp main.py :main.py
 mpremote connect /dev/ttyUSB0 reset
 ```
 
-## Configuración
+## Configuration
 
-Editar las siguientes variables al inicio de `main.py`:
+Edit the following variables at the top of `main.py`:
 
 ```python
-WIFI_SSID     = "TU_SSID"
-WIFI_PASSWORD = "TU_PASSWORD"
+WIFI_SSID     = "YOUR_SSID"
+WIFI_PASSWORD = "YOUR_PASSWORD"
 
 PROXMOX_HOST = "192.168.1.50"
 PROXMOX_PORT = 8006
 
-TELEGRAM_TOKEN = "123456:ABC-DEF1234ghikl"   # Token del bot
-TELEGRAM_CHAT_ID = "123456789"                # ID del chat destino
+TELEGRAM_TOKEN = "123456:ABC-DEF1234ghikl"   # Bot token
+TELEGRAM_CHAT_ID = "123456789"                # Destination chat ID
 
-CHECK_INTERVAL  = 30    # Segundos entre verificaciones
-FAIL_THRESHOLD  = 3     # Fallos consecutivos para disparar alerta
-ALERT_COOLDOWN  = 600   # Silencio tras alerta (10 minutos)
+CHECK_INTERVAL  = 30    # Seconds between health checks
+FAIL_THRESHOLD  = 3     # Consecutive failures to trigger alert
+ALERT_COOLDOWN  = 600   # Silence period after alert (10 minutes)
 ```
 
-## Cómo funciona
+## How it works
 
 ```
-[Boot] → Conectar Wi‑Fi → Loop:
-  ├─ Proxmox responde → contador = 0 → esperar 30s
-  └─ Proxmox NO responde → contador++
-       └─ contador >= 3 → Telegram → dormir 600s
+[Boot] → Connect Wi‑Fi → Loop:
+  ├─ Proxmox responds → counter = 0 → wait 30s
+  └─ Proxmox does NOT respond → counter++
+       └─ counter >= 3 → Telegram alert → sleep 600s
 ```
 
-1. Cada 30 segundos se envía una petición `GET /` a `https://192.168.1.50:8006/`
-2. Si falla (timeout o error de conexión), se incrementa un contador
-3. Al acumular 3 fallos (~1.5 min), se envía una alerta por Telegram
-4. Tras la alerta, se pausa durante 10 minutos para no saturar el dispositivo destino
-5. Si el servidor vuelve a responder, el contador se reinicia a cero
+1. Every 30 seconds a `GET /` request is sent to `https://192.168.1.50:8006/`
+2. On failure (timeout or connection error) a counter increments
+3. After 3 consecutive failures (~1.5 min) a Telegram alert is sent
+4. After sending the alert, a 10‑minute pause prevents notification flooding
+5. If the server starts responding again the failure counter resets to 0
 
-## Monitorear salida serial
+## Monitoring serial output
 
 ```bash
 mpremote connect /dev/ttyUSB0
 ```
 
-Ejemplo de salida:
+Sample output:
 
 ```
 === Monitor de Proxmox para ESP32 ===
@@ -88,7 +88,7 @@ Objetivo:  192.168.1.50:8006
 Intervalo: 30s  |  Umbral: 3 fallos
 Cooldown:  600s (10 min)
 
-[WiFi] Conectando a 'MiWiFi' …
+[WiFi] Conectando a 'MyWiFi' …
 [WiFi] Conectado. IP: 192.168.1.100
 [12345] Verificando Proxmox … OK
 [12375] Verificando Proxmox … OK
@@ -100,6 +100,6 @@ Cooldown:  600s (10 min)
   -> Pausa de 600s (10 min) para evitar spam …
 ```
 
-## Licencia
+## License
 
 MIT
