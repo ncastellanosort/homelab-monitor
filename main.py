@@ -334,6 +334,7 @@ def main():
         "last_alert": 0,
         "uptime": 0,
         "wifi_ip": wifi_ip(),
+        "recovery_pending": False,
     }
 
     server_sock = _web_start()
@@ -376,6 +377,23 @@ def main():
                 if proxmox_check():
                     print(" OK")
                     state["proxmox_online"] = True
+
+                    # Alerta de recuperacion: Proxmox volvio tras una caida
+                    if state["recovery_pending"]:
+                        uptime_str = _format_uptime(int(now))
+                        recover_msg = (
+                            "\xf0\x9f\x9f\xa2 <b>Proxmox RECUPERADO</b>\n"
+                            "<i>El servidor responde nuevamente</i>\n"
+                            "\n"
+                            "\xf0\x9f\x96\xa5 <b>Host:</b> <code>{0}:{1}</code>\n"
+                            "\xe2\x8f\xb1 <b>Uptime:</b> {2}\n"
+                            "\n"
+                            "\xf0\x9f\x8c\x90 <b>Dashboard:</b> <code>http://{3}/</code>"
+                        ).format(PROXMOX_HOST, PROXMOX_PORT, uptime_str, state["wifi_ip"])
+                        print("  -> Enviando alerta de recuperacion ...")
+                        telegram_send(recover_msg)
+                        state["recovery_pending"] = False
+
                     if state["fail_count"] > 0:
                         print("  -> Contador reiniciado (era {0})".format(state["fail_count"]))
                     state["fail_count"] = 0
@@ -399,6 +417,7 @@ def main():
                         print("  -> Enviando alerta ...")
                         telegram_send(msg)
                         state["last_alert"] = now
+                        state["recovery_pending"] = True
                         state["fail_count"] = 0
                         print("  -> Cooldown {0}s ({1} min)".format(
                             ALERT_COOLDOWN, ALERT_COOLDOWN // 60))

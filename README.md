@@ -12,6 +12,7 @@ Proxmox VE availability monitor running on an ESP32 with MicroPython. Periodical
 - Configurable failure threshold before triggering an alert
 - 10‑minute cooldown after each alert to avoid notification spam
 - Telegram notification on boot (device online, dashboard URL)
+- Telegram recovery notification when Proxmox comes back online after an outage
 - Zero external dependencies — uses only MicroPython standard library (`socket`, `ssl`, `network`, `time`, `gc`)
 
 ## Requirements
@@ -81,7 +82,7 @@ Single-file monolithic design (`main.py`, ~400 lines) organized in sections:
 | PROXMOX | Minimal HTTPS `GET /` request, returns bool |
 | TELEGRAM | URL-encode + POST to Bot API |
 | SERVIDOR WEB | Non‑blocking HTTP server with HTML dashboard |
-| BUCLE PRINCIPAL | Cooperative loop: Wi‑Fi watchdog → Proxmox check → HTTP serve |
+| BUCLE PRINCIPAL | Cooperative loop: Wi‑Fi watchdog → Proxmox check (with recovery alert) → HTTP serve |
 | ENTRY POINT | 3s cold-boot delay + `try/except` to keep REPL accessible on crash |
 
 ## How it works
@@ -89,6 +90,7 @@ Single-file monolithic design (`main.py`, ~400 lines) organized in sections:
 ```
 [Boot] → 3s delay → Connect Wi‑Fi (3 retries) → Telegram boot alert → Loop:
   ├─ Proxmox responds → counter = 0 → serve HTTP → wait 30s
+  │    └─ Was down before? → Telegram recovery alert
   └─ Proxmox does NOT respond → counter++
        └─ counter >= 3 → Telegram alert → cooldown 600s (HTTP still served)
 ```
@@ -128,6 +130,9 @@ Dashboard: http://<IP>:80/
   -> Enviando alerta …
   [Telegram] Alerta enviada.
   -> Cooldown 600s (10 min)
+[195] Verificando Proxmox … OK
+  -> Enviando alerta de recuperacion …
+  [Telegram] Alerta enviada.
 ```
 
 ## License

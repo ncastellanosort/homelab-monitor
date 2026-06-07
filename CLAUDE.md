@@ -47,7 +47,7 @@ Archivo monolítico autónomo (~400 líneas) organizado en secciones:
 | 93–121 | PROXMOX | `proxmox_check()` — petición HTTPS mínima, retorna bool |
 | 125–183 | TELEGRAM | `_url_encode()`, `telegram_send()` — POST a api.telegram.org |
 | 187–299 | SERVIDOR WEB | `_web_render()`, `_web_start()`, `_web_serve()` — dashboard HTTP no bloqueante |
-| 303–394 | BUCLE PRINCIPAL | `main()` — orquestador cooperativo (WiFi → check Proxmox → HTTP serve) |
+| 303–394 | BUCLE PRINCIPAL | `main()` — orquestador cooperativo (WiFi → check Proxmox → recovery alert → HTTP serve) |
 | 399–412 | ENTRY POINT | `time.sleep(3)` + `try: main() except: print` para cold-boot |
 
 ### Decisiones de diseño
@@ -57,6 +57,8 @@ Archivo monolítico autónomo (~400 líneas) organizado en secciones:
 - **HTML con string concatenation** en vez de `.format()` con `{{ }}` porque MicroPython no escapa llaves en `.format()`.
 - **Cold-boot**: `time.sleep(3)` antes de `main()` para asegurar que WiFi y flash estén listos. `wifi_connect()` reintenta 3 veces (15s cada intento).
 - **Telegram SSL limitado**: la biblioteca mbedTLS del firmware MicroPython v1.23 puede no soportar TLS 1.2+ con los cifrados de `api.telegram.org`. Las alertas de Telegram pueden fallar silenciosamente. La verificación a Proxmox sí funciona (TLS más básico con certificado auto-firmado).
+- **Recovery alert**: `state["recovery_pending"]` se activa al enviar una alerta de caída y se limpia al enviar la de recuperación. Esto asegura que solo se notifica recuperación tras una caída confirmada (no en flappings leves).
+- **Líneas actualizadas**: el bucle principal ahora abarca hasta ~430 líneas por las adiciones de recovery.
 
 ## Config variables
 
