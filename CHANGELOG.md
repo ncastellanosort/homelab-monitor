@@ -1,6 +1,8 @@
 # Changelog
 
-## [2.0.0] — unreleased
+## [2.0.0] — 2026-11-07
+
+Tested on an ESP32 with MicroPython 1.23.0: Proxmox check, Telegram alerts (down, reminder, recovery), dashboard and API, static IP, watchdog, safe-boot and both deploy modes.
 
 ### Breaking
 
@@ -34,6 +36,8 @@
 - Reminder alert every `ALERT_COOLDOWN` seconds while Proxmox stays down.
 - pytest suite, ruff and GitHub Actions CI (including an `mpy-cross` 1.23 compile check).
 - `deploy.sh` and `deploy.ps1`, with an optional `.mpy` precompile.
+- Optional static IP: `WIFI_IP`, `WIFI_NETMASK`, `WIFI_GATEWAY`, `WIFI_DNS` (empty `WIFI_IP` = DHCP).
+- Telegram errors show the API's explanation (for example a wrong chat ID) on the console, and a failed send shows on the dashboard.
 
 ## [1.1.0] — 2026-06-07
 
