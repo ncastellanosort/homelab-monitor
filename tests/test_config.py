@@ -61,3 +61,28 @@ def test_wdt_timeout():
     c = config.from_env(dict(base, WDT_TIMEOUT="5"))
     assert c.WDT_TIMEOUT == config.WDT_MIN and len(c.problems) == 1
     assert config.from_env(dict(base, WDT_TIMEOUT="-1")).WDT_TIMEOUT == 60
+
+
+def test_static_ip_defaults_from_ip():
+    c = config.from_env({"WIFI_SSID": "x", "TELEGRAM_TOKEN": "t", "TELEGRAM_CHAT_ID": "1",
+                         "WIFI_IP": "192.168.40.7"})
+    assert c.WIFI_STATIC == ("192.168.40.7", "255.255.255.0", "192.168.40.1", "192.168.40.1")
+    assert c.problems == []
+
+
+def test_static_ip_explicit_and_dhcp():
+    env = {"WIFI_IP": "10.1.2.3", "WIFI_NETMASK": "255.255.0.0",
+           "WIFI_GATEWAY": "10.1.0.254", "WIFI_DNS": "1.1.1.1"}
+    assert config.static_ip(env, []) == ("10.1.2.3", "255.255.0.0", "10.1.0.254", "1.1.1.1")
+    assert config.static_ip({}, []) is None
+    assert config.static_ip({"WIFI_IP": ""}, []) is None
+
+
+def test_static_ip_invalid_falls_back_to_dhcp():
+    for bad in ("192.168.40", "192.168.40.300", "a.b.c.d", "1.2.3.4.5", " 1.2.3.4"):
+        problems = []
+        assert config.static_ip({"WIFI_IP": bad}, problems) is None, bad
+        assert len(problems) == 1
+    problems = []
+    assert config.static_ip({"WIFI_IP": "10.0.0.5", "WIFI_GATEWAY": "x"}, problems) is None
+    assert "WIFI_GATEWAY" in problems[0]

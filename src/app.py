@@ -56,6 +56,7 @@ class App:
             "telegram_last_ok": mon.last_send_ok,
             "host": "{0}:{1}".format(self.cfg.PROXMOX_HOST, self.cfg.PROXMOX_PORT),
             "wifi_ip": wifi.ip(),
+            "wifi_static": self.cfg.WIFI_STATIC is not None,
             "uptime_s": now // 1000,
             "warnings": self.cfg.problems,
         }
@@ -89,7 +90,8 @@ class App:
         board.feed()
         if not wifi.is_connected():
             print("[WiFi] Conexion perdida, reintentando ...")
-            if not wifi.connect(c.WIFI_SSID, c.WIFI_PASSWORD, on_wait=board.feed):
+            if not wifi.connect(c.WIFI_SSID, c.WIFI_PASSWORD, on_wait=board.feed,
+                            static=c.WIFI_STATIC):
                 web.serve(self.server, self.status)
                 return
         if self.server is None:
@@ -128,7 +130,8 @@ class App:
 
         board.wdt_start(c.WDT_TIMEOUT)
         # Si el primer intento falla, tick() sigue reintentando (con el WDT vivo)
-        wifi.connect(c.WIFI_SSID, c.WIFI_PASSWORD, on_wait=board.feed)
+        wifi.connect(c.WIFI_SSID, c.WIFI_PASSWORD, on_wait=board.feed,
+                            static=c.WIFI_STATIC)
 
         if wifi.is_connected():
             ip = wifi.ip()

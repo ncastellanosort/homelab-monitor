@@ -86,6 +86,8 @@ Fill in `.env`. It is in `.gitignore` and must never be committed.
 | Key | Required | Default | Meaning |
 |-----|----------|---------|---------|
 | `WIFI_SSID`, `WIFI_PASSWORD` | yes | | Wi-Fi network |
+| `WIFI_IP` | no | empty (DHCP) | Static IP for the ESP32. Exclude it from the router's DHCP range |
+| `WIFI_NETMASK`, `WIFI_GATEWAY`, `WIFI_DNS` | no | `255.255.255.0`, `x.y.z.1`, gateway | Only used with `WIFI_IP` |
 | `PROXMOX_HOST`, `PROXMOX_PORT` | yes | `192.168.1.50`, `8006` | Proxmox web UI |
 | `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` | for alerts | | Bot token and destination chat |
 | `CHECK_INTERVAL` | no | `30` | Seconds between checks |

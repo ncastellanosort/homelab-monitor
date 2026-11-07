@@ -104,3 +104,17 @@ def test_boot_message_failure_shows_on_dashboard(ticks, monkeypatch):
     assert a.status()["telegram_last_ok"] is None
     a.send("arranque")
     assert a.status()["telegram_last_ok"] is False
+
+
+def test_static_ip_applied_on_connect(ticks):
+    import wifi
+    FakeWLAN.address = "0.0.0.0"
+    static = ("192.168.40.7", "255.255.255.0", "192.168.40.1", "192.168.40.1")
+    assert wifi.connect("casa", "pw", static=static)
+    assert FakeWLAN.static == static and wifi.ip() == "192.168.40.7"
+
+
+def test_dhcp_does_not_touch_ifconfig(ticks):
+    import wifi
+    assert wifi.connect("casa", "pw")
+    assert FakeWLAN.static is None

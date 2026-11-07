@@ -23,7 +23,11 @@ class FakeWLAN:
     def connect(self, ssid, password):
         FakeWLAN.connect_calls += 1
 
-    def ifconfig(self):
+    def ifconfig(self, cfg=None):
+        if cfg is not None:
+            FakeWLAN.address = cfg[0]
+            FakeWLAN.static = cfg
+            return None
         return (FakeWLAN.address, "255.255.255.0", "10.0.0.1", "10.0.0.1")
 
 
@@ -90,6 +94,8 @@ def ticks(monkeypatch):
 def reset_fakes():
     FakeWLAN.connected = True
     FakeWLAN.connect_calls = 0
+    FakeWLAN.address = "10.0.0.8"
+    FakeWLAN.static = None
     FakePin.level = 1
     FakeWDT.instances.clear()
     yield

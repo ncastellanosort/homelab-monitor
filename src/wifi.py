@@ -7,10 +7,16 @@ def _wlan():
     return network.WLAN(network.STA_IF)
 
 
-def connect(ssid, password, attempts=3, wait_s=15, on_wait=None):
-    """Conecta a la red. on_wait() se llama cada segundo de espera."""
+def connect(ssid, password, attempts=3, wait_s=15, on_wait=None, static=None):
+    """Conecta a la red. on_wait() se llama cada segundo de espera.
+
+    static = (ip, mascara, gateway, dns) fija la IP; None usa DHCP.
+    """
     wlan = _wlan()
     wlan.active(True)
+    if static is not None and wlan.ifconfig()[0] != static[0]:
+        wlan.ifconfig(static)   # desactiva el cliente DHCP
+        print("[WiFi] IP fija {0} (gw {1})".format(static[0], static[2]))
     if wlan.isconnected():
         print("[WiFi] Ya conectado. IP: {0}".format(wlan.ifconfig()[0]))
         return True

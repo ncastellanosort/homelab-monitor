@@ -82,7 +82,7 @@ def render_html(st):
         _row("Chequeo", check) +
         _row("Alerta", format_ago(st["last_alert_ago_s"])) +
         _row("Telegram", _telegram_text(st)) +
-        _row("WiFi", html_escape(st["wifi_ip"])) +
+        _row("WiFi", html_escape(st["wifi_ip"]) + (" (fija)" if st.get("wifi_static") else "")) +
         "</div>" + warnings +
         "<div class=\"bar\">v" + html_escape(st["version"]) + " &mdash; uptime " +
         format_uptime(st["uptime_s"]) + " &mdash; auto-refresh 30s"

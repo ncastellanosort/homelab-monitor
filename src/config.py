@@ -38,6 +38,38 @@ def env_int(env, key, default, problems, minimum=1):
     return val
 
 
+def valid_ipv4(text):
+    parts = text.split(".")
+    if len(parts) != 4:
+        return False
+    for p in parts:
+        if not p.isdigit() or len(p) > 3 or int(p) > 255:
+            return False
+    return True
+
+
+def static_ip(env, problems):
+    """(ip, mascara, gateway, dns) si WIFI_IP esta definida, o None para DHCP.
+
+    Por defecto: mascara /24, gateway x.y.z.1 y DNS = gateway.
+    """
+    ip = env.get("WIFI_IP", "")
+    if not ip:
+        return None
+    gw_default = ".".join(ip.split(".")[:3] + ["1"])
+    cfg = (ip,
+           env.get("WIFI_NETMASK") or "255.255.255.0",
+           env.get("WIFI_GATEWAY") or gw_default,
+           "")
+    cfg = cfg[:3] + (env.get("WIFI_DNS") or cfg[2],)
+    names = ("WIFI_IP", "WIFI_NETMASK", "WIFI_GATEWAY", "WIFI_DNS")
+    for name, val in zip(names, cfg):
+        if not valid_ipv4(val):
+            problems.append("{0} invalida ('{1}'), usando DHCP".format(name, val))
+            return None
+    return cfg
+
+
 class Config:
     pass
 
@@ -52,6 +84,7 @@ def from_env(env):
 
     c.WIFI_SSID = env.get("WIFI_SSID", "TU_SSID")
     c.WIFI_PASSWORD = env.get("WIFI_PASSWORD", "TU_PASSWORD")
+    c.WIFI_STATIC = static_ip(env, c.problems)   # None = DHCP
 
     c.PROXMOX_HOST = env.get("PROXMOX_HOST", "192.168.1.50")
     c.PROXMOX_PORT = env_int(env, "PROXMOX_PORT", 8006, c.problems)

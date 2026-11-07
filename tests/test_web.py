@@ -73,3 +73,8 @@ def test_render_check_and_telegram_rows():
     assert "sin configurar" in html
     html = web.render_html(status(telegram_last_ok=False, detail="error de red"))
     assert "ERROR en el ultimo envio" in html and "error de red" in html
+
+
+def test_render_static_ip_marker():
+    assert "10.0.0.8 (fija)" in web.render_html(status(wifi_static=True))
+    assert "(fija)" not in web.render_html(status())
