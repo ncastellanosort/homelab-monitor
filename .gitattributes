@@ -1,0 +1,2 @@
+# deploy.sh debe tener LF para ejecutarse en bash/WSL aunque se clone en Windows
+*.sh text eol=lf
