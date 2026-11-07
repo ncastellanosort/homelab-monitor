@@ -23,7 +23,7 @@ def wrap_tls(sock, hostname, ssl_mod=None):
         try:
             import ssl as ssl_mod
         except ImportError:
-            raise OSError("TLS no disponible (sin modulo ssl)")
+            raise OSError("TLS no disponible (sin modulo ssl)") from None
     cert_none = getattr(ssl_mod, "CERT_NONE", 0)
 
     def via_context():

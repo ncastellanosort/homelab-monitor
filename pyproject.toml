@@ -1,0 +1,14 @@
+# Solo herramientas de desarrollo (tests y lint en CPython).
+# El codigo que corre en el ESP32 esta en src/ y no tiene dependencias.
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B"]

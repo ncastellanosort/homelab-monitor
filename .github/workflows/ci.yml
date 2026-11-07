@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install tools
+        run: pip install pytest ruff "mpy-cross>=1.23,<1.24"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Tests
+        run: pytest -q
+
+      - name: Compile for MicroPython 1.23
+        run: |
+          mkdir -p build
+          for f in src/*.py; do
+            python -m mpy_cross -o "build/$(basename "${f%.py}").mpy" "$f"
+          done
