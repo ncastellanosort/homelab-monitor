@@ -4,67 +4,56 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-Single-file MicroPython monitor (`main.py` + stub `boot.py`) for ESP32 that checks a Proxmox server via HTTPS every 30s and serves a live dashboard on port 80. No build system, no external dependencies — uses only MicroPython stdlib (`socket`, `ssl`, `network`, `time`, `gc`).
+Monitor MicroPython para ESP32 que comprueba un servidor Proxmox por HTTPS, envía alertas por Telegram y sirve un dashboard en el puerto 80. El código que corre en la placa está en `src/` y solo usa la stdlib de MicroPython. `tests/` corre en CPython con stubs de hardware.
 
-## ESP32 interaction (Arch Linux host)
-
-Device at `/dev/ttyUSB0` (CP2102 UART bridge, VID:PID `10c4:ea60`, group `uucp`). Tools in `~/.venvs/esp32/`.
+## Comandos de desarrollo
 
 ```bash
-# Activar entorno
-source ~/.venvs/esp32/bin/activate
-
-# Subir main.py (dispara soft-reset, arranca el monitor)
-mpremote connect /dev/ttyUSB0 cp main.py :main.py
-
-# Ver dashboard
-curl http://192.168.1.8:80/
-
-# REPL serial
-mpremote connect /dev/ttyUSB0
+pytest -q                 # tests (pyproject.toml añade src/ al path)
+pytest tests/test_monitor.py::test_reminder_only_after_cooldown   # un test
+ruff check .              # lint
+python -m mpy_cross src/app.py   # comprobar que compila para MicroPython
 ```
 
-**Clean deployment** (cuando `mpremote cp` falla porque el REPL está bloqueado por el monitor corriendo):
+CI (`.github/workflows/ci.yml`) ejecuta ruff, pytest y mpy-cross 1.23 sobre todo `src/`.
+
+## Placa (ESP32 con CP2102, VID:PID `10c4:ea60`)
+
+- **Windows:** necesita el driver Silicon Labs CP210x VCP; sin él aparece "Error, código 28" y no hay puerto COM. Usar `COMx` como puerto.
+- **WSL2:** `usbipd bind/attach --wsl` desde PowerShell como admin; aparece `/dev/ttyUSB0` (grupo `dialout`).
+- **Arch Linux:** `/dev/ttyUSB0`, grupo `uucp`.
+- Herramientas: `mpremote`, `esptool`, `mpy-cross` (pip, en `~/.venvs/esp32`).
 
 ```bash
-esptool --port /dev/ttyUSB0 erase-flash
-esptool --port /dev/ttyUSB0 --baud 460800 write-flash -z 0x1000 ESP32_GENERIC-*.bin
-mpremote connect /dev/ttyUSB0 cp boot.py :boot.py
-mpremote connect /dev/ttyUSB0 cp .env :.env
-mpremote connect /dev/ttyUSB0 cp main.py :main.py   # este cp dispara el arranque
+./deploy.sh /dev/ttyUSB0 [--mpy] [--dry-run]     # Linux/WSL
+.\deploy.ps1 -Port COM3 [-Mpy] [-DryRun]         # Windows
+mpremote connect /dev/ttyUSB0                    # ver salida / REPL
 ```
 
-**Nota:** `mpremote cp` hace soft-reset automático tras cada copia, lo que ejecuta `main.py`. Para subir múltiples archivos en una sesión limpia, subir `boot.py` (stub) primero y `main.py` al final.
+Los scripts de despliegue hacen todo en una sola sesión de mpremote: borran los módulos de la placa (no el `.env`), copian `src/*` (o `.mpy` precompilados, salvo `boot.py`/`main.py`), copian `.env` y hacen `reset`.
 
-## Arquitectura de main.py
+**Si la placa no responde** (watchdog reiniciando o monitor ocupando el REPL): safe-boot. Pulsar EN/RST, soltar, y pulsar BOOT antes de 3 s. Pulsar BOOT *durante* el reset entra en modo descarga de firmware, no en safe-boot. Como último recurso: `esptool erase-flash` + `write-flash` del firmware y volver a desplegar.
 
-Archivo monolítico autónomo (~400 líneas) organizado en secciones:
+## Arquitectura
 
-| Líneas | Sección | Responsabilidad |
-|--------|---------|-----------------|
-| 13–31 | CONFIGURACION | Variables a editar antes de desplegar |
-| 33–67 | WI-FI | `wifi_connect()`, `wifi_ensure()`, `wifi_ip()` — conexión con 3 reintentos |
-| 70–83 | SSL helper | `_ssl_no_verify()` — cascada de 4 estrategias para ignorar certificados |
-| 93–121 | PROXMOX | `proxmox_check()` — petición HTTPS mínima, retorna bool |
-| 125–183 | TELEGRAM | `_url_encode()`, `telegram_send()` — POST a api.telegram.org |
-| 187–299 | SERVIDOR WEB | `_web_render()`, `_web_start()`, `_web_serve()` — dashboard HTTP no bloqueante |
-| 303–394 | BUCLE PRINCIPAL | `main()` — orquestador cooperativo (WiFi → check Proxmox → recovery alert → HTTP serve) |
-| 399–412 | ENTRY POINT | `time.sleep(3)` + `try: main() except: print` para cold-boot |
+- `main.py`: ventana de 3 s de safe-boot (`board.safe_boot_requested`) y luego `app.run()` dentro de un try que deja el REPL libre si algo falla.
+- `app.py`: `App.tick()` es una vuelta del bucle (~1 s): alimenta el WDT, reconecta Wi-Fi, chequea si toca y sirve una petición HTTP. `Clock` acumula `ticks_diff` para tener ms monotónicos sin desborde (no usar `time.time()`: depende del RTC/NTP).
+- `monitor.py`: máquina de estados pura. `on_check(ok, now_ms)` devuelve `DOWN`/`RECOVERY`/`None`; `on_sent(event, delivered, now_ms)` solo cambia el estado si Telegram aceptó el mensaje (si no, se reintenta en el siguiente chequeo). Los chequeos siguen su cadencia durante el cooldown; el cooldown solo espacia los recordatorios de caída.
+- `config.py`: `load(path)` → objeto `Config` con valores y `problems` (avisos que se muestran en consola y dashboard). Sin efectos al importar.
+- `net.py`: `https_request()` es el único sitio que abre sockets TLS. `wrap_tls()` prueba varias APIs de ssl y **nunca devuelve el socket en texto plano**. Solo pasa a la siguiente estrategia ante errores de API (`AttributeError`/`TypeError`); un `OSError` del handshake se propaga.
+- `web.py`: `route()` y `build_response()` son puros (testeables); `serve()` atiende una petición por vuelta.
+- Los módulos con lógica reciben la configuración por parámetro; solo `app.py` usa `config`.
 
-### Decisiones de diseño
+## Restricciones de MicroPython
 
-- **`recv()`/`sendall()` en vez de `read()`/`write()`** para el socket HTTP — más fiable en respuestas a navegadores reales.
-- **`.format()` en vez de f-strings** para compatibilidad con MicroPython (no soporta `:.0f` en f-strings ni `f"\r\n"` con solo escapes).
-- **HTML con string concatenation** en vez de `.format()` con `{{ }}` porque MicroPython no escapa llaves en `.format()`.
-- **Cold-boot**: `time.sleep(3)` antes de `main()` para asegurar que WiFi y flash estén listos. `wifi_connect()` reintenta 3 veces (15s cada intento).
-- **Telegram SSL limitado**: la biblioteca mbedTLS del firmware MicroPython v1.23 puede no soportar TLS 1.2+ con los cifrados de `api.telegram.org`. Las alertas de Telegram pueden fallar silenciosamente. La verificación a Proxmox sí funciona (TLS más básico con certificado auto-firmado).
-- **Recovery alert**: `state["recovery_pending"]` se activa al enviar una alerta de caída y se limpia al enviar la de recuperación. Esto asegura que solo se notifica recuperación tras una caída confirmada (no en flappings leves).
-- **Líneas actualizadas**: el bucle principal ahora abarca hasta ~430 líneas por las adiciones de recovery.
+- Usar `.format()`, no f-strings (por compatibilidad con firmwares antiguos).
+- El HTML se construye concatenando strings, no con `.format()` (las llaves del CSS chocarían).
+- Emojis con escapes Unicode (`"\U0001F534"`), nunca bytes UTF-8 sueltos dentro de un `str`.
+- Sin `time.time()` para medir intervalos; usar `Clock`.
+- Comprobar siempre con mpy-cross 1.23 (CI lo hace) tras cambiar `src/`.
+- `recv()`/`sendall()` en el socket del servidor web: más fiable que `read()`/`write()` con navegadores reales.
+- El TLS de Telegram puede fallar en algunos firmwares (mbedTLS); el chequeo de Proxmox sí funciona.
 
-## Config variables
+## Configuración
 
-Los valores sensibles (`WIFI_SSID`, `WIFI_PASSWORD`, `PROXMOX_HOST`, `PROXMOX_PORT`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`) se leen de un archivo `.env` en la flash del ESP32 mediante `_load_env()` en la sección CONFIGURACION de `main.py`. Plantilla: `.env.example`. Subir con `mpremote connect /dev/ttyUSB0 cp .env :.env` (antes de `main.py`). Si falta `.env`, se usan placeholders (`TU_SSID`, `TU_BOT_TOKEN`, etc.).
-
-Los parámetros de ajuste (`CHECK_INTERVAL`, `FAIL_THRESHOLD`, `ALERT_COOLDOWN`, `REQUEST_TIMEOUT`, `WEB_PORT`) siguen en `main.py`.
-
-`.env` está en `.gitignore`: nunca commitear credenciales reales.
+Todo sale del `.env` de la placa (plantilla: `.env.example`; tabla completa en README). `.env` está en `.gitignore`: nunca commitear credenciales reales ni leer/mostrar su contenido.

@@ -10,7 +10,7 @@ import wifi
 from fmt import format_uptime
 from monitor import DOWN, Monitor
 
-VERSION = "2.0.0-dev"
+VERSION = "2.0.0"
 
 
 class Clock:
