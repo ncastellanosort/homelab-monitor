@@ -34,26 +34,53 @@ def _load_env(path=".env"):
     return env
 
 
+PLACEHOLDERS = ("", "TU_SSID", "TU_PASSWORD", "TU_BOT_TOKEN", "TU_CHAT_ID")
+
+
+def _env_int(env, key, default, problems, minimum=1):
+    raw = env.get(key)
+    if raw is None or raw == "":
+        return default
+    try:
+        val = int(raw)
+    except ValueError:
+        val = None
+    if val is None or val < minimum:
+        problems.append("{0} invalido ('{1}'), usando {2}".format(key, raw, default))
+        return default
+    return val
+
+
+CONFIG_PROBLEMS = []   # avisos para consola y dashboard
 _ENV = _load_env()
 
 WIFI_SSID     = _ENV.get("WIFI_SSID", "TU_SSID")
 WIFI_PASSWORD = _ENV.get("WIFI_PASSWORD", "TU_PASSWORD")
 
 PROXMOX_HOST = _ENV.get("PROXMOX_HOST", "192.168.1.50")
-PROXMOX_PORT = int(_ENV.get("PROXMOX_PORT", "8006"))
+PROXMOX_PORT = _env_int(_ENV, "PROXMOX_PORT", 8006, CONFIG_PROBLEMS)
 
 TELEGRAM_TOKEN   = _ENV.get("TELEGRAM_TOKEN", "TU_BOT_TOKEN")
 TELEGRAM_CHAT_ID = _ENV.get("TELEGRAM_CHAT_ID", "TU_CHAT_ID")
 
+# Ajustes opcionales (se pueden sobreescribir en .env)
+CHECK_INTERVAL  = _env_int(_ENV, "CHECK_INTERVAL", 30, CONFIG_PROBLEMS)    # s entre chequeos
+FAIL_THRESHOLD  = _env_int(_ENV, "FAIL_THRESHOLD", 3, CONFIG_PROBLEMS)     # fallos para alertar
+ALERT_COOLDOWN  = _env_int(_ENV, "ALERT_COOLDOWN", 600, CONFIG_PROBLEMS)   # s entre recordatorios
+REQUEST_TIMEOUT = _env_int(_ENV, "REQUEST_TIMEOUT", 10, CONFIG_PROBLEMS)
+WEB_PORT        = _env_int(_ENV, "WEB_PORT", 80, CONFIG_PROBLEMS)
+
 del _ENV
 
-CHECK_INTERVAL  = 30    # segundos entre chequeos
-FAIL_THRESHOLD  = 3     # fallos consecutivos para alertar
-ALERT_COOLDOWN  = 600   # segundos minimos entre alertas de caida repetidas
-REQUEST_TIMEOUT = 10
-WEB_PORT        = 80
+WIFI_CONFIGURED = WIFI_SSID not in PLACEHOLDERS
+TELEGRAM_ENABLED = (TELEGRAM_TOKEN not in PLACEHOLDERS and
+                    TELEGRAM_CHAT_ID not in PLACEHOLDERS)
+if not WIFI_CONFIGURED:
+    CONFIG_PROBLEMS.append("WIFI_SSID sin configurar en .env")
+if not TELEGRAM_ENABLED:
+    CONFIG_PROBLEMS.append("Telegram sin configurar en .env: alertas desactivadas")
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 
 # ============================================================
@@ -333,6 +360,9 @@ def msg_recovery(host, port, uptime_s, ip):
 
 
 def telegram_send(mensaje):
+    if not TELEGRAM_ENABLED:
+        print("  [Telegram] Sin configurar, mensaje no enviado.")
+        return False
     host = "api.telegram.org"
     path = "/bot{0}/sendMessage".format(TELEGRAM_TOKEN)
     body = "chat_id={0}&text={1}&parse_mode=HTML".format(
@@ -432,6 +462,11 @@ def _web_render(st):
     else:
         clr, txt = "#ef4444", "OFFLINE"
 
+    warnings = ""
+    for p in CONFIG_PROBLEMS:
+        warnings += ("<div style=\"color:#f59e0b;font-size:.8rem;margin:4px 0\">"
+                     "&#9888; " + html_escape(p) + "</div>")
+
     CRLF = "\r\n"
     body = (
         "<!DOCTYPE html>"
@@ -471,7 +506,7 @@ def _web_render(st):
         "<span class=\"val\">" + format_ago(st["last_alert_ago_s"]) + "</span></div>"
         "<div class=\"row\"><span class=\"lbl\">WiFi</span>"
         "<span class=\"val\">" + st["wifi_ip"] + "</span></div>"
-        "</div>"
+        "</div>" + warnings +
         "<div class=\"bar\">v" + VERSION + " &mdash; uptime " + format_uptime(st["uptime_s"]) +
         " &mdash; auto-refresh 30s</div>"
         "</div>"
@@ -549,9 +584,14 @@ def main():
         PROXMOX_HOST, PROXMOX_PORT, CHECK_INTERVAL))
     print("Dashboard: http://<IP>:{0}/".format(WEB_PORT))
     print("=" * 40 + "\n")
+    for p in CONFIG_PROBLEMS:
+        print("[Config] AVISO: " + p)
 
     clock = Clock()
 
+    if not WIFI_CONFIGURED:
+        print("[FATAL] Configura WIFI_SSID y WIFI_PASSWORD en .env y subelo a la placa.")
+        return
     if not wifi_connect():
         print("[FATAL] Sin Wi-Fi.")
         return
