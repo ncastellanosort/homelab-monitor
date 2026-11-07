@@ -32,6 +32,8 @@ mpremote connect /dev/ttyUSB0                    # ver salida / REPL
 
 Los scripts de despliegue hacen todo en una sola sesión de mpremote: borran los módulos de la placa (no el `.env`), copian `src/*` (o `.mpy` precompilados, salvo `boot.py`/`main.py`), copian `.env` y hacen `reset`.
 
+Justo después de un reset, mpremote puede fallar con "could not enter raw repl" porque el Ctrl-C llega antes de que MicroPython esté listo: esperar unos segundos y repetir.
+
 **Si la placa no responde** (watchdog reiniciando o monitor ocupando el REPL): safe-boot. Pulsar EN/RST, soltar, y pulsar BOOT antes de 3 s. Pulsar BOOT *durante* el reset entra en modo descarga de firmware, no en safe-boot. Como último recurso: `esptool erase-flash` + `write-flash` del firmware y volver a desplegar.
 
 ## Arquitectura

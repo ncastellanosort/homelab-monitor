@@ -65,7 +65,9 @@ class App:
         if not c.TELEGRAM_ENABLED:
             print("  [Telegram] Sin configurar, mensaje no enviado.")
             return False
-        return notifier.send(c.TELEGRAM_TOKEN, c.TELEGRAM_CHAT_ID, text, c.REQUEST_TIMEOUT)
+        ok = notifier.send(c.TELEGRAM_TOKEN, c.TELEGRAM_CHAT_ID, text, c.REQUEST_TIMEOUT)
+        self.mon.last_send_ok = ok   # tambien para el mensaje de arranque
+        return ok
 
     def notify(self, event, uptime_s):
         c, mon, ip = self.cfg, self.mon, wifi.ip()

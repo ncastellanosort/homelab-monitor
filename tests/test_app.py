@@ -95,3 +95,12 @@ def test_run_survives_initial_wifi_failure(ticks, monkeypatch):
     cfg = config.from_env({"WIFI_SSID": "casa", "WDT_TIMEOUT": "0"})
     app.App(cfg).run()
     assert len(calls) == 3
+
+
+def test_boot_message_failure_shows_on_dashboard(ticks, monkeypatch):
+    monkeypatch.setattr(app.notifier, "send", lambda *a: False)
+    a = app.App(config.from_env({"WIFI_SSID": "casa", "TELEGRAM_TOKEN": "t",
+                                 "TELEGRAM_CHAT_ID": "1"}))
+    assert a.status()["telegram_last_ok"] is None
+    a.send("arranque")
+    assert a.status()["telegram_last_ok"] is False

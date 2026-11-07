@@ -52,3 +52,11 @@ def test_send_network_error(monkeypatch):
         raise OSError("timeout")
     monkeypatch.setattr(notifier.net, "https_request", boom)
     assert notifier.send("t", "1", "x") is False
+
+
+def test_error_description():
+    resp = (b'HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\n\r\n'
+            b'{"ok":false,"error_code":403,"description":"Forbidden: bot was blocked by the user"}')
+    assert notifier.error_description(resp) == "Forbidden: bot was blocked by the user"
+    assert notifier.error_description(b"HTTP/1.1 502 Bad Gateway\r\n\r\n<html>") == ""
+    assert notifier.error_description(b'..."description":"cortado') == "cortado"

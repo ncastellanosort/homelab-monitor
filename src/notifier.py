@@ -79,16 +79,29 @@ def build_request(token, chat_id, text):
     ).format(path, TELEGRAM_HOST, len(body), body).encode()
 
 
+def error_description(resp):
+    """Extrae "description" del JSON de error de Telegram (o "" si no esta)."""
+    key = b'"description":"'
+    i = resp.find(key)
+    if i < 0:
+        return ""
+    i += len(key)
+    j = resp.find(b'"', i)
+    return resp[i:j if j >= 0 else len(resp)].decode()
+
+
 def send(token, chat_id, text, timeout=10):
     """Envia text al chat. Devuelve True solo si Telegram responde 200."""
     try:
         resp = net.https_request(TELEGRAM_HOST, 443,
-                                 build_request(token, chat_id, text), 128, timeout)
+                                 build_request(token, chat_id, text), 768, timeout)
     except Exception as e:
         print("  [Telegram] Error de red: {0}".format(e))
         return False
-    if net.parse_status(resp) == 200:
+    status = net.parse_status(resp)
+    if status == 200:
         print("  [Telegram] Mensaje enviado.")
         return True
-    print("  [Telegram] Error: {0}".format(resp[:120]))
+    print("  [Telegram] Error HTTP {0}: {1}".format(
+        status, error_description(resp) or resp[:120]))
     return False
