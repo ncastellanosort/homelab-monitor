@@ -39,12 +39,13 @@ curl -LO https://micropython.org/resources/firmware/ESP32_GENERIC-20240602-v1.23
 esptool --port /dev/ttyUSB0 erase-flash
 esptool --port /dev/ttyUSB0 --baud 460800 write-flash -z 0x1000 ESP32_GENERIC-*.bin
 
-# 4. Edit credentials in main.py (lines 17–24)
-#    WIFI_SSID, WIFI_PASSWORD, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
+# 4. Create your .env from the template and fill in your values
+cp .env.example .env
 
-# 5. Upload files (order matters: boot.py first, main.py last)
+# 5. Upload files (order matters: boot.py and .env first, main.py last)
 source ~/.venvs/esp32/bin/activate
 mpremote connect /dev/ttyUSB0 cp boot.py :boot.py
+mpremote connect /dev/ttyUSB0 cp .env :.env
 mpremote connect /dev/ttyUSB0 cp main.py :main.py   # triggers auto-start
 ```
 
@@ -52,18 +53,22 @@ mpremote connect /dev/ttyUSB0 cp main.py :main.py   # triggers auto-start
 
 ## Configuration
 
-Edit the following variables at the top of `main.py`:
+Credentials and network settings live in a `.env` file on the ESP32 (never committed — it is in `.gitignore`). Copy `.env.example` to `.env`, fill it in and upload it with `mpremote cp .env :.env`:
+
+```ini
+WIFI_SSID=YOUR_SSID
+WIFI_PASSWORD=YOUR_PASSWORD
+
+PROXMOX_HOST=192.168.1.50
+PROXMOX_PORT=8006
+
+TELEGRAM_TOKEN=123456:ABC-DEF1234ghikl   # Bot token
+TELEGRAM_CHAT_ID=123456789               # Destination chat ID
+```
+
+If `.env` is missing, `main.py` prints a warning and falls back to placeholders. Tuning values stay at the top of `main.py`:
 
 ```python
-WIFI_SSID     = "YOUR_SSID"
-WIFI_PASSWORD = "YOUR_PASSWORD"
-
-PROXMOX_HOST = "192.168.1.50"
-PROXMOX_PORT = 8006
-
-TELEGRAM_TOKEN = "123456:ABC-DEF1234ghikl"   # Bot token
-TELEGRAM_CHAT_ID = "123456789"                # Destination chat ID
-
 CHECK_INTERVAL  = 30    # Seconds between health checks
 FAIL_THRESHOLD  = 3     # Consecutive failures to trigger alert
 ALERT_COOLDOWN  = 600   # Silence period after alert (10 minutes)

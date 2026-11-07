@@ -30,6 +30,7 @@ mpremote connect /dev/ttyUSB0
 esptool --port /dev/ttyUSB0 erase-flash
 esptool --port /dev/ttyUSB0 --baud 460800 write-flash -z 0x1000 ESP32_GENERIC-*.bin
 mpremote connect /dev/ttyUSB0 cp boot.py :boot.py
+mpremote connect /dev/ttyUSB0 cp .env :.env
 mpremote connect /dev/ttyUSB0 cp main.py :main.py   # este cp dispara el arranque
 ```
 
@@ -62,6 +63,8 @@ Archivo monolítico autónomo (~400 líneas) organizado en secciones:
 
 ## Config variables
 
-En `main.py` líneas 17–31: `WIFI_SSID`, `WIFI_PASSWORD`, `PROXMOX_HOST`, `PROXMOX_PORT`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`, `CHECK_INTERVAL`, `FAIL_THRESHOLD`, `ALERT_COOLDOWN`, `REQUEST_TIMEOUT`, `WEB_PORT`.
+Los valores sensibles (`WIFI_SSID`, `WIFI_PASSWORD`, `PROXMOX_HOST`, `PROXMOX_PORT`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`) se leen de un archivo `.env` en la flash del ESP32 mediante `_load_env()` en la sección CONFIGURACION de `main.py`. Plantilla: `.env.example`. Subir con `mpremote connect /dev/ttyUSB0 cp .env :.env` (antes de `main.py`). Si falta `.env`, se usan placeholders (`TU_SSID`, `TU_BOT_TOKEN`, etc.).
 
-Nunca commitear credenciales reales. El repositorio usa placeholders (`TU_SSID`, `TU_BOT_TOKEN`, etc.).
+Los parámetros de ajuste (`CHECK_INTERVAL`, `FAIL_THRESHOLD`, `ALERT_COOLDOWN`, `REQUEST_TIMEOUT`, `WEB_PORT`) siguen en `main.py`.
+
+`.env` está en `.gitignore`: nunca commitear credenciales reales.

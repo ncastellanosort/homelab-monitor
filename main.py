@@ -11,17 +11,41 @@ import gc
 
 
 # ============================================================
-# CONFIGURACION — ajusta estos valores a tu entorno
+# CONFIGURACION — los valores sensibles se leen de .env
+# (ver .env.example; subirlo con: mpremote cp .env :.env)
 # ============================================================
 
-WIFI_SSID     = "TU_SSID"
-WIFI_PASSWORD = "TU_PASSWORD"
+def _load_env(path=".env"):
+    env = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                key = key.strip()
+                val = val.strip()
+                if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+                    val = val[1:-1]
+                env[key] = val
+    except OSError:
+        print("[Config] AVISO: no se encontro {0}, usando placeholders.".format(path))
+    return env
 
-PROXMOX_HOST = "192.168.1.50"
-PROXMOX_PORT = 8006
 
-TELEGRAM_TOKEN = "TU_BOT_TOKEN"
-TELEGRAM_CHAT_ID = "TU_CHAT_ID"
+_ENV = _load_env()
+
+WIFI_SSID     = _ENV.get("WIFI_SSID", "TU_SSID")
+WIFI_PASSWORD = _ENV.get("WIFI_PASSWORD", "TU_PASSWORD")
+
+PROXMOX_HOST = _ENV.get("PROXMOX_HOST", "192.168.1.50")
+PROXMOX_PORT = int(_ENV.get("PROXMOX_PORT", "8006"))
+
+TELEGRAM_TOKEN   = _ENV.get("TELEGRAM_TOKEN", "TU_BOT_TOKEN")
+TELEGRAM_CHAT_ID = _ENV.get("TELEGRAM_CHAT_ID", "TU_CHAT_ID")
+
+del _ENV
 
 CHECK_INTERVAL  = 30
 FAIL_THRESHOLD  = 3
