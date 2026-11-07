@@ -52,3 +52,12 @@ def test_invalid_numbers_fall_back_to_defaults():
                          "PROXMOX_PORT": "abc", "CHECK_INTERVAL": "0", "WEB_PORT": ""})
     assert (c.PROXMOX_PORT, c.CHECK_INTERVAL, c.WEB_PORT) == (8006, 30, 80)
     assert len(c.problems) == 2
+
+
+def test_wdt_timeout():
+    base = {"WIFI_SSID": "x", "TELEGRAM_TOKEN": "t", "TELEGRAM_CHAT_ID": "1"}
+    assert config.from_env(base).WDT_TIMEOUT == 60
+    assert config.from_env(dict(base, WDT_TIMEOUT="0")).WDT_TIMEOUT == 0
+    c = config.from_env(dict(base, WDT_TIMEOUT="5"))
+    assert c.WDT_TIMEOUT == config.WDT_MIN and len(c.problems) == 1
+    assert config.from_env(dict(base, WDT_TIMEOUT="-1")).WDT_TIMEOUT == 60

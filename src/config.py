@@ -1,6 +1,7 @@
 """config.py — lee y valida la configuracion desde .env (sin efectos al importar)."""
 
 PLACEHOLDERS = ("", "TU_SSID", "TU_PASSWORD", "TU_BOT_TOKEN", "TU_CHAT_ID")
+WDT_MIN = 30
 
 
 def load_env(path=".env"):
@@ -64,6 +65,12 @@ def from_env(env):
     c.ALERT_COOLDOWN = env_int(env, "ALERT_COOLDOWN", 600, c.problems)   # s entre recordatorios
     c.REQUEST_TIMEOUT = env_int(env, "REQUEST_TIMEOUT", 10, c.problems)
     c.WEB_PORT = env_int(env, "WEB_PORT", 80, c.problems)
+    # Watchdog: 0 lo desactiva. Menos de WDT_MIN reiniciaria la placa
+    # durante un handshake TLS lento o la conexion Wi-Fi.
+    c.WDT_TIMEOUT = env_int(env, "WDT_TIMEOUT", 60, c.problems, minimum=0)
+    if 0 < c.WDT_TIMEOUT < WDT_MIN:
+        c.problems.append("WDT_TIMEOUT minimo {0} s (era {1})".format(WDT_MIN, c.WDT_TIMEOUT))
+        c.WDT_TIMEOUT = WDT_MIN
 
     c.WIFI_CONFIGURED = c.WIFI_SSID not in PLACEHOLDERS
     c.TELEGRAM_ENABLED = (c.TELEGRAM_TOKEN not in PLACEHOLDERS and

@@ -68,3 +68,30 @@ def test_reconnects_wifi(harness):
     FakeWLAN.connected = False
     step(True)
     assert FakeWLAN.connect_calls >= 1
+
+
+def test_tick_feeds_watchdog(harness):
+    import board
+    from conftest import FakeWDT
+    a, step, _ = harness
+    board.wdt_start(60)
+    try:
+        step(True)
+        assert FakeWDT.instances[0].feeds >= 2
+    finally:
+        board._wdt = None
+
+
+def test_run_survives_initial_wifi_failure(ticks, monkeypatch):
+    """Sin Wi-Fi al arrancar ya no se aborta: el bucle sigue reintentando."""
+    FakeWLAN.connected = False
+    calls = []
+
+    def fake_tick(self):
+        calls.append(1)
+        if len(calls) == 3:
+            raise KeyboardInterrupt
+    monkeypatch.setattr(app.App, "tick", fake_tick)
+    cfg = config.from_env({"WIFI_SSID": "casa", "WDT_TIMEOUT": "0"})
+    app.App(cfg).run()
+    assert len(calls) == 3

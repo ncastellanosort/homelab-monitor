@@ -1,6 +1,7 @@
 """app.py — orquestador: Wi-Fi -> chequeo de Proxmox -> alertas -> HTTP."""
 import time
 
+import board
 import config
 import notifier
 import proxmox
@@ -83,9 +84,10 @@ class App:
     def tick(self):
         """Una vuelta del bucle principal (~1 s)."""
         c, mon = self.cfg, self.mon
+        board.feed()
         if not wifi.is_connected():
             print("[WiFi] Conexion perdida, reintentando ...")
-            if not wifi.connect(c.WIFI_SSID, c.WIFI_PASSWORD):
+            if not wifi.connect(c.WIFI_SSID, c.WIFI_PASSWORD, on_wait=board.feed):
                 web.serve(self.server, self.status)
                 return
         if self.server is None:
@@ -101,9 +103,11 @@ class App:
             else:
                 print(" FALLO {0}/{1} ({2})".format(mon.fail_count, mon.fail_threshold, detail))
             if event is not None:
+                board.feed()   # cada operacion de red tiene su propio margen
                 self.notify(event, now // 1000)
 
         # Servir HTTP (no bloqueante, timeout 1s)
+        board.feed()
         web.serve(self.server, self.status)
 
     def run(self):
@@ -119,22 +123,27 @@ class App:
         if not c.WIFI_CONFIGURED:
             print("[FATAL] Configura WIFI_SSID y WIFI_PASSWORD en .env y subelo a la placa.")
             return
-        if not wifi.connect(c.WIFI_SSID, c.WIFI_PASSWORD):
-            print("[FATAL] Sin Wi-Fi.")
-            return
 
-        ip = wifi.ip()
-        self.server = web.start(c.WEB_PORT, ip)
+        board.wdt_start(c.WDT_TIMEOUT)
+        # Si el primer intento falla, tick() sigue reintentando (con el WDT vivo)
+        wifi.connect(c.WIFI_SSID, c.WIFI_PASSWORD, on_wait=board.feed)
 
-        print("[Boot] Enviando notificacion a Telegram ...")
-        self.send(notifier.msg_boot(ip, c.WEB_PORT, c.PROXMOX_HOST, c.PROXMOX_PORT,
-                                    self.clock.now_ms() // 1000))
+        if wifi.is_connected():
+            ip = wifi.ip()
+            self.server = web.start(c.WEB_PORT, ip)
+            board.feed()
+            print("[Boot] Enviando notificacion a Telegram ...")
+            self.send(notifier.msg_boot(ip, c.WEB_PORT, c.PROXMOX_HOST, c.PROXMOX_PORT,
+                                        self.clock.now_ms() // 1000))
 
         while True:
             try:
                 self.tick()
             except KeyboardInterrupt:
                 print("\n[INFO] Monitor detenido.")
+                if board.wdt_active():
+                    print("[WDT] Sigue activo: la placa se reiniciara en <= {0} s. "
+                          "Para usar el REPL: reset y pulsa BOOT.".format(c.WDT_TIMEOUT))
                 break
             except Exception as e:
                 print("[ERROR] {0}".format(e))
